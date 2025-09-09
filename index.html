@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Live Vliegtuigen - OpenSky</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map {
+      height: 100vh;
+      width: 100vw;
+    }
+    .plane-icon {
+      width: 32px;
+      height: 32px;
+      transform-origin: center center;
+      transition: transform 0.5s linear;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([50.85, 4.35], 6); // België
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let planes = {}; // dictionary met vliegtuigen per icao24
+
+    function createPlaneIcon(rotation) {
+      return L.divIcon({
+        className: '',
+        html: `
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" 
+               viewBox="0 0 24 24" fill="black" stroke="black" stroke-width="2"
+               style="transform: rotate(${rotation}deg); transform-origin: center;">
+            <path d="M2.5 19l19.5-7L2.5 5v5l10 2-10 2z"/>
+          </svg>
+        `,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+    }
+
+    async function fetchPlanes() {
+      const url = "https://opensky-network.org/api/states/all?lamin=49.0&lomin=2.0&lamax=52.0&lomax=7.0";
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.states) {
+          const activeIcao = new Set();
+
+          data.states.forEach(state => {
+            const icao24 = state[0]; // uniek ID
+            const callsign = state[1];
+            const lon = state[5];
+            const lat = state[6];
+            const velocity = state[9];
+            const track = state[10];
+
+            if (lat && lon) {
+              activeIcao.add(icao24);
+
+              if (!planes[icao24]) {
+                // nieuw vliegtuig → maak marker
+                const marker = L.marker([lat, lon], { icon: createPlaneIcon(track || 0) })
+                  .bindPopup(`<b>${callsign || "Onbekend"}</b><br>
+                              Snelheid: ${Math.round(velocity)} m/s<br>
+                              Heading: ${track || "?"}°`)
+                  .addTo(map);
+
+                planes[icao24] = { marker, lastTrack: track || 0 };
+              } else {
+                // bestaand vliegtuig → update positie en rotatie
+                planes[icao24].marker.setLatLng([lat, lon]);
+
+                const icon = createPlaneIcon(track || planes[icao24].lastTrack);
+                planes[icao24].marker.setIcon(icon);
+                planes[icao24].lastTrack = track || planes[icao24].lastTrack;
+              }
+            }
+          });
+
+          // Verwijder vliegtuigen die niet meer actief zijn
+          for (let id in planes) {
+            if (!activeIcao.has(id)) {
+              map.removeLayer(planes[id].marker);
+              delete planes[id];
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Fout bij ophalen data:", err);
+      }
+    }
+
+    // initieel en elke 0,5 seconden verversen
+    fetchPlanes();
+    setInterval(fetchPlanes, 500);
+  </script>
+</body>
+</html>
