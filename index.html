@@ -9,12 +9,6 @@
       height: 100vh;
       width: 100vw;
     }
-    .plane-icon {
-      width: 32px;
-      height: 32px;
-      transform-origin: center center;
-      transition: transform 0.5s linear;
-    }
   </style>
 </head>
 <body>
@@ -22,31 +16,34 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    const map = L.map('map').setView([50.85, 4.35], 6); // België
+    const map = L.map('map').setView([20, 0], 2); // start: wereldbeeld
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    let planes = {}; // dictionary met vliegtuigen per icao24
+    let planes = {}; // dictionary met vliegtuigen
 
-    function createPlaneIcon(rotation) {
+    // Functie om vliegtuigicoon te maken met schaal volgens zoom
+    function createPlaneIcon(rotation, zoom) {
+      const size = Math.max(12, zoom * 2); // minimaal 12px, groter bij inzoomen
       return L.divIcon({
         className: '',
         html: `
-          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" 
+          <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" 
                viewBox="0 0 24 24" fill="black" stroke="black" stroke-width="2"
                style="transform: rotate(${rotation}deg); transform-origin: center;">
             <path d="M2.5 19l19.5-7L2.5 5v5l10 2-10 2z"/>
           </svg>
         `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2]
       });
     }
 
     async function fetchPlanes() {
-      const url = "https://opensky-network.org/api/states/all?lamin=49.0&lomin=2.0&lamax=52.0&lomax=7.0";
+      const url = "https://opensky-network.org/api/states/all"; // hele wereld 🌍
+      const zoom = map.getZoom();
 
       try {
         const response = await fetch(url);
@@ -67,8 +64,8 @@
               activeIcao.add(icao24);
 
               if (!planes[icao24]) {
-                // nieuw vliegtuig → maak marker
-                const marker = L.marker([lat, lon], { icon: createPlaneIcon(track || 0) })
+                // nieuw vliegtuig
+                const marker = L.marker([lat, lon], { icon: createPlaneIcon(track || 0, zoom) })
                   .bindPopup(`<b>${callsign || "Onbekend"}</b><br>
                               Snelheid: ${Math.round(velocity)} m/s<br>
                               Heading: ${track || "?"}°`)
@@ -76,17 +73,16 @@
 
                 planes[icao24] = { marker, lastTrack: track || 0 };
               } else {
-                // bestaand vliegtuig → update positie en rotatie
+                // bestaand vliegtuig → update positie & rotatie
                 planes[icao24].marker.setLatLng([lat, lon]);
-
-                const icon = createPlaneIcon(track || planes[icao24].lastTrack);
+                const icon = createPlaneIcon(track || planes[icao24].lastTrack, zoom);
                 planes[icao24].marker.setIcon(icon);
                 planes[icao24].lastTrack = track || planes[icao24].lastTrack;
               }
             }
           });
 
-          // Verwijder vliegtuigen die niet meer actief zijn
+          // vliegtuigen die niet meer actief zijn verwijderen
           for (let id in planes) {
             if (!activeIcao.has(id)) {
               map.removeLayer(planes[id].marker);
@@ -102,6 +98,15 @@
     // initieel en elke 0,5 seconden verversen
     fetchPlanes();
     setInterval(fetchPlanes, 500);
+
+    // bij zoom aanpassen ook iconen opnieuw schalen
+    map.on("zoomend", () => {
+      const zoom = map.getZoom();
+      for (let id in planes) {
+        const track = planes[id].lastTrack || 0;
+        planes[id].marker.setIcon(createPlaneIcon(track, zoom));
+      }
+    });
   </script>
 </body>
 </html>
