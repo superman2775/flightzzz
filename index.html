@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <title>Live Vliegtuigen - OpenSky</title>
+  <title>Live Vliegtuigen - OpenSky Smooth</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     #map {
@@ -22,11 +22,11 @@
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    let planes = {}; // dictionary met vliegtuigen
+    let planes = {}; // vliegtuigen per icao24
 
-    // Functie om vliegtuigicoon te maken met schaal volgens zoom
+    // icoon generator
     function createPlaneIcon(rotation, zoom) {
-      const size = Math.max(12, zoom * 2); // minimaal 12px, groter bij inzoomen
+      const size = Math.max(12, zoom * 2);
       return L.divIcon({
         className: '',
         html: `
@@ -41,9 +41,11 @@
       });
     }
 
+    // fetch vliegtuigen elke 5 seconden
     async function fetchPlanes() {
-      const url = "https://opensky-network.org/api/states/all"; // hele wereld 🌍
+      const url = "https://opensky-network.org/api/states/all";
       const zoom = map.getZoom();
+      const now = Date.now();
 
       try {
         const response = await fetch(url);
@@ -53,7 +55,7 @@
           const activeIcao = new Set();
 
           data.states.forEach(state => {
-            const icao24 = state[0]; // uniek ID
+            const icao24 = state[0];
             const callsign = state[1];
             const lon = state[5];
             const lat = state[6];
@@ -71,10 +73,21 @@
                               Heading: ${track || "?"}°`)
                   .addTo(map);
 
-                planes[icao24] = { marker, lastTrack: track || 0 };
+                planes[icao24] = {
+                  marker,
+                  lastTrack: track || 0,
+                  start: { lat, lon, time: now },
+                  end: { lat, lon, time: now + 5000 }
+                };
               } else {
-                // bestaand vliegtuig → update positie & rotatie
-                planes[icao24].marker.setLatLng([lat, lon]);
+                // update target positie
+                planes[icao24].start = {
+                  lat: planes[icao24].end.lat,
+                  lon: planes[icao24].end.lon,
+                  time: now
+                };
+                planes[icao24].end = { lat, lon, time: now + 5000 };
+
                 const icon = createPlaneIcon(track || planes[icao24].lastTrack, zoom);
                 planes[icao24].marker.setIcon(icon);
                 planes[icao24].lastTrack = track || planes[icao24].lastTrack;
@@ -82,7 +95,7 @@
             }
           });
 
-          // vliegtuigen die niet meer actief zijn verwijderen
+          // verwijder vliegtuigen die niet meer actief zijn
           for (let id in planes) {
             if (!activeIcao.has(id)) {
               map.removeLayer(planes[id].marker);
@@ -95,16 +108,37 @@
       }
     }
 
-    // initieel en elke 0,5 seconden verversen
-    fetchPlanes();
-    setInterval(fetchPlanes, 500);
+    // animatie loop voor interpolatie
+    function animate() {
+      const now = Date.now();
+      const zoom = map.getZoom();
 
-    // bij zoom aanpassen ook iconen opnieuw schalen
+      for (let id in planes) {
+        const p = planes[id];
+        const { start, end } = p;
+
+        const progress = Math.min(1, (now - start.time) / (end.time - start.time));
+        const lat = start.lat + (end.lat - start.lat) * progress;
+        const lon = start.lon + (end.lon - start.lon) * progress;
+
+        p.marker.setLatLng([lat, lon]);
+        // update icon grootte bij zoom
+        p.marker.setIcon(createPlaneIcon(p.lastTrack, zoom));
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    // start
+    fetchPlanes();
+    setInterval(fetchPlanes, 5000);
+    animate();
+
+    // bij zoom → iconen schalen
     map.on("zoomend", () => {
       const zoom = map.getZoom();
       for (let id in planes) {
-        const track = planes[id].lastTrack || 0;
-        planes[id].marker.setIcon(createPlaneIcon(track, zoom));
+        planes[id].marker.setIcon(createPlaneIcon(planes[id].lastTrack, zoom));
       }
     });
   </script>
