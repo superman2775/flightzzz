@@ -1,145 +1,101 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8">
-  <title>Live Vliegtuigen - OpenSky Smooth</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Flight Map (Proxy)</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
   <style>
-    #map {
-      height: 100vh;
-      width: 100vw;
-    }
+    html, body { height: 100%; margin: 0; }
+    body { font-family: Arial, sans-serif; }
+    #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+    #homeScreen { position: absolute; top:0; left:0; width:100%; height:100%; background:#1e1e1e; color:white; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:20px; }
+    #startBtn { padding: 1em 2em; font-size: 1.2em; cursor: pointer; border:none; border-radius:8px; background:#0078ff; color:white; margin-top:10px; }
+    #captcha { padding:10px; background:white; color:black; border-radius:8px; text-align:center; user-select:none; }
   </style>
 </head>
 <body>
+  <div id="homeScreen">
+    <h1>Welkom bij Live Flight Map</h1>
+    <p>Beantwoord de vraag om de kaart te starten</p>
+    <div id="captcha">Wat is <span id="num1">?</span> + <span id="num2">?</span>? <input type="text" id="captchaInput" style="width:40px" /></div>
+    <button id="startBtn" disabled>Start Kaart</button>
+  </div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
   <script>
-    const map = L.map('map').setView([20, 0], 2); // start: wereldbeeld
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+    const MIN_ICON_PX = 12;
+    const ICON_SCALE = 2;
 
-    let planes = {}; // vliegtuigen per icao24
+    let map, clusterGroup;
 
-    // icoon generator
-    function createPlaneIcon(rotation, zoom) {
-      const size = Math.max(12, zoom * 2);
+    function iconSizeForZoom(zoom){return Math.max(MIN_ICON_PX,Math.round(zoom*ICON_SCALE));}
+    function createPlaneIcon(rotationDeg, zoom){
+      const size=iconSizeForZoom(zoom);
       return L.divIcon({
-        className: '',
-        html: `
-          <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" 
-               viewBox="0 0 24 24" fill="black" stroke="black" stroke-width="2"
-               style="transform: rotate(${rotation}deg); transform-origin: center;">
-            <path d="M2.5 19l19.5-7L2.5 5v5l10 2-10 2z"/>
-          </svg>
-        `,
-        iconSize: [size, size],
-        iconAnchor: [size/2, size/2]
+        className:'plane-icon',
+        html:`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="black" stroke="black" stroke-width="2" style="transform: rotate(${rotationDeg}deg); transform-origin: center;"><path d="M2.5 19l19.5-7L2.5 5v5l10 2-10 2z"/></svg>`,
+        iconSize:[size,size],
+        iconAnchor:[size/2,size/2]
       });
     }
 
-    // fetch vliegtuigen elke 5 seconden
-    async function fetchPlanes() {
-      const url = "https://opensky-network.org/api/states/all";
-      const zoom = map.getZoom();
-      const now = Date.now();
+    let correctAnswer = 0;
+    function generateCaptcha(){
+      const n1 = Math.floor(Math.random()*10+1);
+      const n2 = Math.floor(Math.random()*10+1);
+      correctAnswer = n1 + n2;
+      document.getElementById('num1').textContent = n1;
+      document.getElementById('num2').textContent = n2;
+      document.getElementById('captchaInput').value = '';
+      document.getElementById('startBtn').disabled = true;
+    }
+    generateCaptcha();
 
-      try {
-        const response = await fetch(url);
-        const data = await response.json();
+    document.getElementById('captchaInput').addEventListener('input', ()=>{
+      const val = parseInt(document.getElementById('captchaInput').value.trim(),10);
+      document.getElementById('startBtn').disabled = (val !== correctAnswer);
+    });
 
-        if (data.states) {
-          const activeIcao = new Set();
+    document.getElementById('startBtn').addEventListener('click',()=>{
+      document.getElementById('homeScreen').style.display='none';
+      document.getElementById('map').style.display='block';
 
-          data.states.forEach(state => {
-            const icao24 = state[0];
-            const callsign = state[1];
-            const lon = state[5];
-            const lat = state[6];
-            const velocity = state[9];
-            const track = state[10];
+      map = L.map('map', { preferCanvas: true }).setView([20,0],2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+      clusterGroup = L.markerClusterGroup({ disableClusteringAtZoom:6, spiderfyOnMaxZoom:true, chunkedLoading:true });
+      map.addLayer(clusterGroup);
 
-            if (lat && lon) {
-              activeIcao.add(icao24);
-
-              if (!planes[icao24]) {
-                // nieuw vliegtuig
-                const marker = L.marker([lat, lon], { icon: createPlaneIcon(track || 0, zoom) })
-                  .bindPopup(`<b>${callsign || "Onbekend"}</b><br>
-                              Snelheid: ${Math.round(velocity)} m/s<br>
-                              Heading: ${track || "?"}°`)
-                  .addTo(map);
-
-                planes[icao24] = {
-                  marker,
-                  lastTrack: track || 0,
-                  start: { lat, lon, time: now },
-                  end: { lat, lon, time: now + 5000 }
-                };
-              } else {
-                // update target positie
-                planes[icao24].start = {
-                  lat: planes[icao24].end.lat,
-                  lon: planes[icao24].end.lon,
-                  time: now
-                };
-                planes[icao24].end = { lat, lon, time: now + 5000 };
-
-                const icon = createPlaneIcon(track || planes[icao24].lastTrack, zoom);
-                planes[icao24].marker.setIcon(icon);
-                planes[icao24].lastTrack = track || planes[icao24].lastTrack;
-              }
+      async function fetchPlanes(){
+        try{
+          // Gebruik een publieke CORS-proxy om het CORS-probleem te vermijden
+          const url = 'https://api.allorigins.win/get?url=' + encodeURIComponent('https://opensky-network.org/api/states/all');
+          const response = await fetch(url);
+          if(!response.ok) throw new Error('Fout bij ophalen: '+response.status);
+          const wrapped = await response.json();
+          const data = JSON.parse(wrapped.contents);
+          clusterGroup.clearLayers();
+          data.states.forEach(plane => {
+            const lat = plane[6];
+            const lon = plane[5];
+            const track = plane[10] || 0;
+            if(lat && lon){
+              const marker = L.marker([lat, lon], {icon:createPlaneIcon(track, map.getZoom())});
+              marker.bindPopup(`<b>${plane[1] || 'Onbekend'}</b>`);
+              clusterGroup.addLayer(marker);
             }
           });
-
-          // verwijder vliegtuigen die niet meer actief zijn
-          for (let id in planes) {
-            if (!activeIcao.has(id)) {
-              map.removeLayer(planes[id].marker);
-              delete planes[id];
-            }
-          }
+        }catch(e){
+          console.error('Fout bij ophalen vliegtuigen:', e);
         }
-      } catch (err) {
-        console.error("Fout bij ophalen data:", err);
-      }
-    }
-
-    // animatie loop voor interpolatie
-    function animate() {
-      const now = Date.now();
-      const zoom = map.getZoom();
-
-      for (let id in planes) {
-        const p = planes[id];
-        const { start, end } = p;
-
-        const progress = Math.min(1, (now - start.time) / (end.time - start.time));
-        const lat = start.lat + (end.lat - start.lat) * progress;
-        const lon = start.lon + (end.lon - start.lon) * progress;
-
-        p.marker.setLatLng([lat, lon]);
-        // update icon grootte bij zoom
-        p.marker.setIcon(createPlaneIcon(p.lastTrack, zoom));
       }
 
-      requestAnimationFrame(animate);
-    }
-
-    // start
-    fetchPlanes();
-    setInterval(fetchPlanes, 5000);
-    animate();
-
-    // bij zoom → iconen schalen
-    map.on("zoomend", () => {
-      const zoom = map.getZoom();
-      for (let id in planes) {
-        planes[id].marker.setIcon(createPlaneIcon(planes[id].lastTrack, zoom));
-      }
+      fetchPlanes();
+      setInterval(fetchPlanes, 10000);
     });
   </script>
 </body>
