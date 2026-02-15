@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Flight Map (Proxy)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    #homeScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 2rem;
+      z-index: 10;
+      transition: opacity 0.5s ease-out;
+    }
+
+    #homeScreen.fade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 300;
+      margin: 0;
+      text-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: clamp(1rem, 3vw, 1.3rem);
+      opacity: 0.9;
+      margin: 0;
+      text-align: center;
+      max-width: 90%;
+    }
+
+    #captcha {
+      background: rgba(255,255,255,0.15);
+      backdrop-filter: blur(10px);
+      padding: 2rem;
+      border-radius: 20px;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.2);
+      min-width: 280px;
+    }
+
+    .math-equation {
+      font-size: 2.5rem;
+      font-weight: 600;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.1em;
+      margin-bottom: 1rem;
+    }
+
+    #captchaInput {
+      width: 80px;
+      padding: 12px 16px;
+      font-size: 1.5rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 12px;
+      text-align: center;
+      background: rgba(255,255,255,0.9);
+      color: #333;
+      transition: all 0.3s ease;
+      font-family: 'Courier New', monospace;
+    }
+
+    #captchaInput:focus {
+      outline: none;
+      transform: scale(1.05);
+      box-shadow: 0 0 20px rgba(255,255,255,0.5);
+    }
+
+    #startBtn {
+      padding: 1.2rem 3rem;
+      font-size: 1.3rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      border-radius: 50px;
+      background: linear-gradient(45deg, #ff6b6b, #feca57);
+      color: white;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    #startBtn:not(:disabled) {
+      opacity: 1;
+      pointer-events: all;
+      transform: translateY(0);
+    }
+
+    #startBtn:not(:disabled):hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 35px rgba(0,0,0,0.4);
+    }
+
+    #startBtn:not(:disabled):active {
+      transform: translateY(-1px);
+    }
+
+    .stats {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 15px;
+      font-size: 0.9rem;
+      font-family: monospace;
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+    }
+
+    .error {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(255,107,107,0.95);
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 500;
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      transform: translateX(-100%);
+      transition: transform 0.3s ease;
+    }
+
+    .error.show {
+      transform: translateX(0);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+  </style>
+</head>
+<body>
+  <div id="homeScreen">
+    <h1>✈️ Live Flight Map</h1>
+    <p class="subtitle">Beantwoord de simpele rekensom om de kaart te starten</p>
+    <div id="captcha">
+      <div class="math-equation" id="equation">
+        Wat is <span id="num1">?</span> + <span id="num2">?</span>?
+      </div>
+      <input type="text" id="captchaInput" placeholder="?" maxlength="2" autocomplete="off" />
+    </div>
+    <button id="startBtn" disabled>Start Live Kaart</button>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="stats" class="stats" style="display: none;">
+    <div>Vliegtuigen: <span id="planeCount">0</span></div>
+    <div>Laatste update: <span id="lastUpdate">--</span></div>
+  </div>
+
+  <div id="errorMsg" class="error"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+  <script>
+    class FlightMap {
+      constructor() {
+        this.map = null;
+        this.clusterGroup = null;
+        this.markers = new Map();
+        this.lastUpdate = null;
+        this.init();
+      }
+
+      init() {
+        this.setupCaptcha();
+        this.setupMap();
+        this.bindEvents();
+      }
+
+      setupCaptcha() {
+        this.correctAnswer = 0;
+        this.generateCaptcha();
+        
+        const input = document.getElementById('captchaInput');
+        input.addEventListener('input', (e) => {
+          const val = parseInt(e.target.value.trim()) || 0;
+          document.getElementById('startBtn').disabled = val !== this.correctAnswer;
+        });
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+          this.startMap();
+        });
+      }
+
+      generateCaptcha() {
+        const n1 = Math.floor(Math.random() * 10) + 1;
+        const n2 = Math.floor(Math.random() * 10) + 1;
+        this.correctAnswer = n1 + n2;
+        
+        document.getElementById('num1').textContent = n1;
+        document.getElementById('num2').textContent = n2;
+        document.getElementById('captchaInput').value = '';
+        document.getElementById('captchaInput').focus();
+      }
+
+      setupMap() {
+        this.map = L.map('map', {
+          preferCanvas: true,
+          zoomControl: true,
+          attributionControl: true
+        }).setView([45, 10], 3);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap contributors | Flight data: OpenSky Network'
+        }).addTo(this.map);
+
+        this.clusterGroup = L.markerClusterGroup({
+          disableClusteringAtZoom: 8,
+          spiderfyOnMaxZoom: true,
+          chunkedLoading: true,
+          polygonOptions: {
+            color: '#ff6b6b'
+          }
+        });
+        this.map.addLayer(this.clusterGroup);
+
+        // Custom zoom handler for icon scaling
+        this.map.on('zoomend', () => this.updateIconSizes());
+      }
+
+      startMap() {
+        document.getElementById('homeScreen').classList.add('fade-out');
+        setTimeout(() => {
+          document.getElementById('homeScreen').style.display = 'none';
+          document.getElementById('map').style.display = 'block';
+          document.getElementById('stats').style.display = 'block';
+        }, 500);
+
+        this.fetchPlanes();
+        setInterval(() => this.fetchPlanes(), 10000);
+      }
+
+      createPlaneIcon(rotation = 0, size = 16) {
+        return L.divIcon({
+          className: 'plane-icon',
+          html: `
+            <svg width="${size}" height="${size}" viewBox="0 0 24 24" 
+                 fill="#ff6b6b" stroke="#ffffff" stroke-width="1.5"
+                 style="transform: rotate(${rotation}deg); transform-origin: center;">
+              <path d="M2.5 19l19.5-7L2.5 5v5l10 2-10 2z"/>
+            </svg>
+          `,
+          iconSize: [size, size],
+          iconAnchor: [size/2, size/2],
+          popupAnchor: [0, -size/2]
+        });
+      }
+
+      updateIconSizes() {
+        this.markers.forEach(marker => {
+          const zoom = this.map.getZoom();
+          const size = Math.max(12, Math.round(zoom * 1.8));
+          const track = marker.userData?.track || 0;
+          marker.setIcon(this.createPlaneIcon(track, size));
+        });
+      }
+
+      async fetchPlanes() {
+        try {
+          this.showError('');
+          
+          const proxyUrl = 'https://api.allorigins.win/get?url=' + 
+            encodeURIComponent('https://opensky-network.org/api/states/all');
+          
+          const response = await fetch(proxyUrl);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          
+          const wrapped = await response.json();
+          const data = JSON.parse(wrapped.contents);
+          
+          this.updatePlanes(data.states || []);
+          this.updateStats(data.time || Date.now());
+          
+        } catch (error) {
+          console.error('Fetch error:', error);
+          this.showError(`Kan geen vluchtgegevens ophalen: ${error.message}`);
+        }
+      }
+
+      updatePlanes(states) {
+        // Remove old markers
+        this.clusterGroup.clearLayers();
+        this.markers.clear();
+
+        let count = 0;
+        states.forEach(plane => {
+          const [icao24, callsign, origin, timepos, , longitude, latitude, , , , heading] = plane;
+          
+          if (latitude && longitude && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+            const track = heading || 0;
+            const size = Math.max(12, Math.round(this.map?.getZoom() * 1.8) || 16);
+            
+            const marker = L.marker([latitude, longitude], {
+              icon: this.createPlaneIcon(track, size)
+            });
+
+            marker.userData = { track, icao24 };
+            
+            const popupContent = `
+              <div style="min-width: 200px;">
+                <strong>${callsign || icao24 || 'Onbekend'}</strong><br>
+                <small>ICAO: ${icao24 || 'N/A'}</small><br>
+                Positie: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}<br>
+                Koers: ${track.toFixed(0)}°
+              </div>
+            `;
+            
+            marker.bindPopup(popupContent, { 
+              closeButton: true, 
+              autoClose: true,
+              className: 'flight-popup'
+            });
+
+            this.clusterGroup.addLayer(marker);
+            this.markers.set(icao24, marker);
+            count++;
+          }
+        });
+
+        document.getElementById('planeCount').textContent = count;
+      }
+
+      updateStats(timestamp) {
+        this.lastUpdate = new Date(timestamp * 1000).toLocaleTimeString('nl-BE');
+        document.getElementById('lastUpdate').textContent = this.lastUpdate;
+      }
+
+      showError(message) {
+        const errorEl = document.getElementById('errorMsg');
+        errorEl.textContent = message;
+        if (message) {
+          errorEl.classList.add('show');
+          errorEl.classList.add('pulse');
+        } else {
+          errorEl.classList.remove('show', 'pulse');
+        }
+      }
+
+      bindEvents() {
+        // Regenerate captcha on Escape
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && document.getElementById('homeScreen').style.display !== 'none') {
+            this.generateCaptcha();
+          }
+        });
+      }
+    }
+
+    // Initialize when DOM is ready
+    document.addEventListener('DOMContentLoaded', () => {
+      new FlightMap();
+    });
+  </script>
+</body>
+</html>
